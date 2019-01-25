@@ -2961,9 +2961,9 @@ static bool StopRetransmission( void )
         }
     }
 
-    MacCtx.ChannelsNbTransCounter = 0;
+    MacCtx.NvmCtx->ChannelsNbTransCounter = 0;
     MacCtx.NodeAckRequested = false;
-    MacCtx.AckTimeoutRetry = false;
+    MacCtx.NvmCtx->AckTimeoutRetry = false;
     MacCtx.MacState &= ~LORAMAC_TX_RUNNING;
 
     return true;
