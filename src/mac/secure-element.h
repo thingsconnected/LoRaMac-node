@@ -30,12 +30,23 @@
  *
  * \author    Johannes Bruder ( STACKFORCE )
  *
+ * \defgroup  SECUREELEMENT Secure Element API Definition
+ *
+ * \{
+ *
  */
 #ifndef __SECURE_ELEMENT_H__
 #define __SECURE_ELEMENT_H__
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 #include <stdint.h>
 #include "LoRaMacCrypto.h"
+
+#define SE_EUI_SIZE             8
 
 /*!
  * Return values.
@@ -46,6 +57,10 @@ typedef enum eSecureElementStatus
      * No error occurred
      */
     SECURE_ELEMENT_SUCCESS = 0,
+    /*!
+     * Failed to encrypt
+     */
+    SECURE_ELEMENT_FAIL_ENCRYPT,
     /*!
      * CMAC does not match
      */
@@ -159,11 +174,67 @@ SecureElementStatus_t SecureElementAesEncrypt( uint8_t* buffer, uint16_t size, K
 SecureElementStatus_t SecureElementDeriveAndStoreKey( Version_t version, uint8_t* input, KeyIdentifier_t rootKeyID, KeyIdentifier_t targetKeyID );
 
 /*!
+ * Process JoinAccept message.
+ *
+ * \param[IN]  encKeyID          - Key identifier of the key which will be used to decrypt the JoinAccept message
+ * \param[IN]  micKeyID          - Key identifier of the key which will be used to compute the JoinAccept message MIC
+ * \param[IN]  versionMinor      - LoRaWAN specification version minor field which will be used to perform the processing.
+ *                                     - 0 -> LoRaWAN 1.0.x
+ *                                     - 1 -> LoRaWAN 1.1.x
+ * \param[IN]  micHeader         - Header buffer to be used for MIC computation
+ *                                     - LoRaWAN 1.0.x : micHeader = [MHDR(1)]
+ *                                     - LoRaWAN 1.1.x : micHeader = [JoinReqType(1), JoinEUI(8), DevNonce(2), MHDR(1)]
+ * \param[IN]  encJoinAccept     - Received encrypted JoinAccept message
+ * \param[IN]  encJoinAcceptSize - Received encrypted JoinAccept message Size
+ * \param[IN]  decJoinAccept     - Decrypted and validated JoinAccept message
+ * \retval                       - Status of the operation
+ */
+SecureElementStatus_t SecureElementProcessJoinAccept( KeyIdentifier_t encKeyID, KeyIdentifier_t micKeyID, uint8_t versionMinor,
+                                                      uint8_t *micHeader, uint8_t *encJoinAccept, uint8_t encJoinAcceptSize,
+                                                      uint8_t *decJoinAccept );
+
+/*!
  * Generates a random number
  *
  * \param[OUT] randomNum      - 32 bit random number
  * \retval                    - Status of the operation
  */
 SecureElementStatus_t SecureElementRandomNumber( uint32_t* randomNum );
+
+/*!
+ * Sets the DevEUI
+ *
+ * \param[IN] devEui          - Pointer to the 16-byte devEUI
+ * \retval                    - Status of the operation
+ */
+SecureElementStatus_t SecureElementSetDevEui( uint8_t* devEui );
+
+/*!
+ * Gets the DevEUI
+ *
+ * \retval                    - Pointer to the 16-byte devEUI
+ */
+uint8_t* SecureElementGetDevEui( void );
+
+/*!
+ * Sets the JoinEUI
+ *
+ * \param[IN] joinEui         - Pointer to the 16-byte joinEui
+ * \retval                    - Status of the operation
+ */
+SecureElementStatus_t SecureElementSetJoinEui( uint8_t* joinEui );
+
+/*!
+ * Gets the DevEUI
+ *
+ * \retval                    - Pointer to the 16-byte joinEui
+ */
+uint8_t* SecureElementGetJoinEui( void );
+
+/*! \} defgroup SECUREELEMENT */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif //  __SECURE_ELEMENT_H__

@@ -88,8 +88,6 @@
  */
 #define LORAWAN_APP_PORT                            2
 
-static uint8_t DevEui[] = LORAWAN_DEVICE_EUI;
-static uint8_t JoinEui[] = LORAWAN_JOIN_EUI;
 #if( ABP_ACTIVATION_LRWAN_VERSION == ABP_ACTIVATION_LRWAN_VERSION_V10x )
 static uint8_t GenAppKey[] = LORAWAN_GEN_APP_KEY;
 #else
@@ -330,8 +328,6 @@ static void JoinNetwork( void )
     LoRaMacStatus_t status;
     MlmeReq_t mlmeReq;
     mlmeReq.Type = MLME_JOIN;
-    mlmeReq.Req.Join.DevEui = DevEui;
-    mlmeReq.Req.Join.JoinEui = JoinEui;
     mlmeReq.Req.Join.Datarate = LORAWAN_DEFAULT_DATARATE;
 
     // Starts the join procedure
@@ -346,6 +342,12 @@ static void JoinNetwork( void )
     }
     else
     {
+        if( status == LORAMAC_STATUS_DUTYCYCLE_RESTRICTED )
+        {
+            TimerTime_t nextTxIn = 0;
+            LoRaMacQueryNextTxDelay( LORAWAN_DEFAULT_DATARATE, &nextTxIn );
+            printf( "Next Tx in  : ~%lu second(s)\r\n", ( nextTxIn / 1000 ) );
+        }
         DeviceState = DEVICE_STATE_CYCLE;
     }
 }
@@ -530,6 +532,13 @@ static bool SendFrame( void )
     status = LoRaMacMcpsRequest( &mcpsReq );
     printf( "\r\n###### ===== MCPS-Request ==== ######\r\n" );
     printf( "STATUS      : %s\r\n", MacStatusStrings[status] );
+
+    if( status == LORAMAC_STATUS_DUTYCYCLE_RESTRICTED )
+    {
+        TimerTime_t nextTxIn = 0;
+        LoRaMacQueryNextTxDelay( LORAWAN_DEFAULT_DATARATE, &nextTxIn );
+        printf( "Next Tx in  : ~%lu second(s)\r\n", ( nextTxIn / 1000 ) );
+    }
 
     if( status == LORAMAC_STATUS_OK )
     {
@@ -892,6 +901,17 @@ static void McpsIndication( McpsIndication_t *mcpsIndication )
                         ComplianceTest.State = 1;
                     }
                     break;
+                case 8: // Send DeviceTimeReq
+                    {
+                        MlmeReq_t mlmeReq;
+
+                        mlmeReq.Type = MLME_DEVICE_TIME;
+
+                        LoRaMacStatus_t status = LoRaMacMlmeRequest( &mlmeReq );
+                        printf( "\r\n###### ===== MLME-Request - MLME_DEVICE_TIME ==== ######\r\n" );
+                        printf( "STATUS      : %s\r\n", MacStatusStrings[status] );
+                    }
+                    break;
                 default:
                     break;
                 }
@@ -1031,6 +1051,8 @@ int main( void )
     LoRaMacCallback_t macCallbacks;
     MibRequestConfirm_t mibReq;
     LoRaMacStatus_t status;
+    uint8_t devEui[] = LORAWAN_DEVICE_EUI;
+    uint8_t joinEui[] = LORAWAN_JOIN_EUI;
 
     BoardInitMcu( );
     BoardInitPeriph( );
@@ -1044,11 +1066,19 @@ int main( void )
     macCallbacks.NvmContextChange = NvmCtxMgmtEvent;
     macCallbacks.MacProcessNotify = OnMacProcessNotify;
 
-    LoRaMacInitialization( &macPrimitives, &macCallbacks, ACTIVE_REGION );
+    status = LoRaMacInitialization( &macPrimitives, &macCallbacks, ACTIVE_REGION );
+    if ( status != LORAMAC_STATUS_OK )
+    {
+        printf( "LoRaMac wasn't properly initialized, error: %s", MacStatusStrings[status] );
+        // Fatal error, endless loop.
+        while ( 1 )
+        {
+        }
+    }
 
     DeviceState = DEVICE_STATE_RESTORE;
 
-    printf( "###### ===== ClassA demo application v1.0.RC1 ==== ######\r\n\r\n" );
+    printf( "###### ===== ClassA demo application v1.0.0 ==== ######\r\n\r\n" );
 
     while( 1 )
     {
@@ -1093,13 +1123,21 @@ int main( void )
                     LoRaMacMibSetRequestConfirm( &mibReq );
 
                     // Initialize LoRaMac device unique ID if not already defined in Commissioning.h
-                    if( ( DevEui[0] == 0 ) && ( DevEui[1] == 0 ) &&
-                        ( DevEui[2] == 0 ) && ( DevEui[3] == 0 ) &&
-                        ( DevEui[4] == 0 ) && ( DevEui[5] == 0 ) &&
-                        ( DevEui[6] == 0 ) && ( DevEui[7] == 0 ) )
+                    if( ( devEui[0] == 0 ) && ( devEui[1] == 0 ) &&
+                        ( devEui[2] == 0 ) && ( devEui[3] == 0 ) &&
+                        ( devEui[4] == 0 ) && ( devEui[5] == 0 ) &&
+                        ( devEui[6] == 0 ) && ( devEui[7] == 0 ) )
                     {
-                        BoardGetUniqueId( DevEui );
+                        BoardGetUniqueId( devEui );
                     }
+
+                    mibReq.Type = MIB_DEV_EUI;
+                    mibReq.Param.DevEui = devEui;
+                    LoRaMacMibSetRequestConfirm( &mibReq );
+
+                    mibReq.Type = MIB_JOIN_EUI;
+                    mibReq.Param.JoinEui = joinEui;
+                    LoRaMacMibSetRequestConfirm( &mibReq );
 
 #if( OVER_THE_AIR_ACTIVATION == 0 )
                     // Choose a random device address if not already defined in Commissioning.h
@@ -1187,16 +1225,20 @@ int main( void )
             }
             case DEVICE_STATE_JOIN:
             {
-                printf( "DevEui      : %02X", DevEui[0] );
+                mibReq.Type = MIB_DEV_EUI;
+                LoRaMacMibGetRequestConfirm( &mibReq );
+                printf( "DevEui      : %02X", mibReq.Param.DevEui[0] );
                 for( int i = 1; i < 8; i++ )
                 {
-                    printf( "-%02X", DevEui[i] );
+                    printf( "-%02X", mibReq.Param.DevEui[i] );
                 }
                 printf( "\r\n" );
-                printf( "AppEui      : %02X", JoinEui[0] );
+                mibReq.Type = MIB_JOIN_EUI;
+                LoRaMacMibGetRequestConfirm( &mibReq );
+                printf( "AppEui      : %02X", mibReq.Param.JoinEui[0] );
                 for( int i = 1; i < 8; i++ )
                 {
-                    printf( "-%02X", JoinEui[i] );
+                    printf( "-%02X", mibReq.Param.JoinEui[i] );
                 }
                 printf( "\r\n" );
                 printf( "AppKey      : %02X", NwkKey[0] );

@@ -1032,7 +1032,6 @@ static void LoRaMacClassBProcessPingSlot( void )
 
                 pingSlotRxConfig.Datarate = Ctx.NvmCtx->PingSlotCtx.Datarate;
                 pingSlotRxConfig.DownlinkDwellTime = Ctx.LoRaMacClassBParams.LoRaMacParams->DownlinkDwellTime;
-                pingSlotRxConfig.RepeaterSupport = Ctx.LoRaMacClassBParams.LoRaMacParams->RepeaterSupport;
                 pingSlotRxConfig.Frequency = frequency;
                 pingSlotRxConfig.RxContinuous = false;
                 pingSlotRxConfig.RxSlot = RX_SLOT_WIN_CLASS_B_PING_SLOT;
@@ -1186,7 +1185,6 @@ static void LoRaMacClassBProcessMulticastSlot( void )
 
             multicastSlotRxConfig.Datarate = Ctx.PingSlotCtx.NextMulticastChannel->ChannelParams.RxParams.ClassB.Datarate;
             multicastSlotRxConfig.DownlinkDwellTime = Ctx.LoRaMacClassBParams.LoRaMacParams->DownlinkDwellTime;
-            multicastSlotRxConfig.RepeaterSupport = Ctx.LoRaMacClassBParams.LoRaMacParams->RepeaterSupport;
             multicastSlotRxConfig.Frequency = frequency;
             multicastSlotRxConfig.RxContinuous = false;
             multicastSlotRxConfig.RxSlot = RX_SLOT_WIN_CLASS_B_MULTICAST_SLOT;
@@ -1282,7 +1280,10 @@ bool LoRaMacClassBRxBeacon( uint8_t *payload, uint16_t size )
             // Reset beacon variables, if one of the crc is valid
             if( beaconProcessed == true )
             {
-                TimerTime_t time = Radio.TimeOnAir( MODEM_LORA, size );
+                getPhy.Attribute = PHY_BEACON_CHANNEL_DR;
+                phyParam = RegionGetPhyParam( *Ctx.LoRaMacClassBParams.LoRaMacRegion, &getPhy );
+
+                TimerTime_t time = Radio.TimeOnAir( MODEM_LORA, 0, phyParam.Value, 1, 8, false, size, true );
                 SysTime_t timeOnAir;
                 timeOnAir.Seconds = time / 1000;
                 timeOnAir.SubSeconds = time - timeOnAir.Seconds * 1000;
@@ -1543,7 +1544,8 @@ uint8_t LoRaMacClassBPingSlotChannelReq( uint8_t datarate, uint32_t frequency )
     if( frequency != 0 )
     {
         isCustomFreq = true;
-        if( Radio.CheckRfFrequency( frequency ) == false )
+        verify.Frequency = frequency;
+        if( RegionVerify( *Ctx.LoRaMacClassBParams.LoRaMacRegion, &verify, PHY_FREQUENCY ) == false )
         {
             status &= 0xFE; // Channel frequency KO
         }
@@ -1647,9 +1649,13 @@ void LoRaMacClassBDeviceTimeAns( void )
 bool LoRaMacClassBBeaconFreqReq( uint32_t frequency )
 {
 #ifdef LORAMAC_CLASSB_ENABLED
+    VerifyParams_t verify;
+
     if( frequency != 0 )
     {
-        if( Radio.CheckRfFrequency( frequency ) == true )
+        verify.Frequency = frequency;
+
+        if( RegionVerify( *Ctx.LoRaMacClassBParams.LoRaMacRegion, &verify, PHY_FREQUENCY ) == true )
         {
             Ctx.NvmCtx->BeaconCtx.Ctrl.CustomFreq = 1;
             Ctx.NvmCtx->BeaconCtx.Frequency = frequency;

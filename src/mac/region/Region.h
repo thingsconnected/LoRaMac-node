@@ -52,6 +52,11 @@
 #ifndef __REGION_H__
 #define __REGION_H__
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 #include "utilities.h"
@@ -62,6 +67,13 @@
  * Macro to compute bit of a channel index.
  */
 #define LC( channelIndex )                          ( uint16_t )( 1 << ( channelIndex - 1 ) )
+
+#ifndef REGION_VERSION
+/*!
+ * Regional parameters version definition.
+ */
+#define REGION_VERSION                              0x00010003
+#endif
 
 /*!
  * Region       | SF
@@ -476,7 +488,7 @@
  * EU868        | -
  * IN865        | Max EIRP - 18
  * KR920        | -
- * US915        | Max ERP - 16
+ * US915        | Max ERP - 18
  * RU864        | -
  */
 #define TX_POWER_9                                  9
@@ -492,28 +504,72 @@
  * EU868        | -
  * IN865        | Max EIRP - 20
  * KR920        | -
- * US915        | Max ERP - 10
+ * US915        | Max ERP - 20
  * RU864        | -
  */
 #define TX_POWER_10                                 10
 
 /*!
- * RFU
+ * Region       | dBM
+ * ------------ | :-----:
+ * AS923        | -
+ * AU915        | Max EIRP - 22
+ * CN470        | -
+ * CN779        | -
+ * EU433        | -
+ * EU868        | -
+ * IN865        | -
+ * KR920        | -
+ * US915        | Max ERP - 22
+ * RU864        | -
  */
 #define TX_POWER_11                                 11
 
 /*!
- * RFU
+ * Region       | dBM
+ * ------------ | :-----:
+ * AS923        | -
+ * AU915        | Max EIRP - 24
+ * CN470        | -
+ * CN779        | -
+ * EU433        | -
+ * EU868        | -
+ * IN865        | -
+ * KR920        | -
+ * US915        | Max ERP - 24
+ * RU864        | -
  */
 #define TX_POWER_12                                 12
 
 /*!
- * RFU
+ * Region       | dBM
+ * ------------ | :-----:
+ * AS923        | -
+ * AU915        | Max EIRP - 26
+ * CN470        | -
+ * CN779        | -
+ * EU433        | -
+ * EU868        | -
+ * IN865        | -
+ * KR920        | -
+ * US915        | Max ERP - 26
+ * RU864        | -
  */
 #define TX_POWER_13                                 13
 
 /*!
- * RFU
+ * Region       | dBM
+ * ------------ | :-----:
+ * AS923        | -
+ * AU915        | Max EIRP - 28
+ * CN470        | -
+ * CN779        | -
+ * EU433        | -
+ * EU868        | -
+ * IN865        | -
+ * KR920        | -
+ * US915        | Max ERP - 28
+ * RU864        | -
  */
 #define TX_POWER_14                                 14
 
@@ -590,10 +646,6 @@ typedef enum ePhyAttribute
      * Maximum payload possible.
      */
     PHY_MAX_PAYLOAD,
-    /*!
-     * Maximum payload possible when repeater support is enabled.
-     */
-    PHY_MAX_PAYLOAD_REPEATER,
     /*!
      * Duty cycle.
      */
@@ -760,6 +812,10 @@ typedef enum ePhyAttribute
 typedef enum eInitType
 {
     /*!
+     * Initializes the band definitions.
+     */
+    INIT_TYPE_BANDS,
+    /*!
      * Initializes the region specific data to defaults, according to the
      * LoRaWAN specification.
      */
@@ -844,21 +900,21 @@ typedef struct sGetPhyParams
     /*!
      * Datarate.
      * The parameter is needed for the following queries:
-     * PHY_MAX_PAYLOAD, PHY_MAX_PAYLOAD_REPEATER, PHY_NEXT_LOWER_TX_DR.
+     * PHY_MAX_PAYLOAD, PHY_NEXT_LOWER_TX_DR.
      */
     int8_t Datarate;
     /*!
      * Uplink dwell time. This parameter must be set to query:
-     * PHY_MAX_PAYLOAD, PHY_MAX_PAYLOAD_REPEATER, PHY_MIN_TX_DR.
+     * PHY_MAX_PAYLOAD, PHY_MIN_TX_DR.
      * The parameter is needed for the following queries:
-     * PHY_MIN_TX_DR, PHY_MAX_PAYLOAD, PHY_MAX_PAYLOAD_REPEATER, PHY_NEXT_LOWER_TX_DR.
+     * PHY_MIN_TX_DR, PHY_MAX_PAYLOAD, PHY_NEXT_LOWER_TX_DR.
      */
     uint8_t UplinkDwellTime;
     /*!
      * Downlink dwell time. This parameter must be set to query:
-     * PHY_MAX_PAYLOAD, PHY_MAX_PAYLOAD_REPEATER, PHY_MIN_RX_DR.
+     * PHY_MAX_PAYLOAD, PHY_MIN_RX_DR.
      * The parameter is needed for the following queries:
-     * PHY_MIN_RX_DR, PHY_MAX_PAYLOAD, PHY_MAX_PAYLOAD_REPEATER.
+     * PHY_MIN_RX_DR, PHY_MAX_PAYLOAD.
      */
     uint8_t DownlinkDwellTime;
 }GetPhyParams_t;
@@ -1013,10 +1069,6 @@ typedef struct sRxConfigParams
      * Downlink dwell time.
      */
     uint8_t DownlinkDwellTime;
-    /*!
-     * Set to true, if a repeater is supported.
-     */
-    bool RepeaterSupport;
     /*!
      * Set to true, if RX should be continuous.
      */
@@ -1236,6 +1288,11 @@ typedef struct sNextChanParams
      * Set to true, if the duty cycle is enabled, otherwise false.
      */
     bool DutyCycleEnabled;
+    /*!
+     * Set to true, if the function shall only provide the time
+     * for the next transmission.
+     */
+    bool QueryNextTxDelayOnly;
 }NextChanParams_t;
 
 /*!
@@ -1639,6 +1696,17 @@ uint8_t RegionApplyDrOffset( LoRaMacRegion_t region, uint8_t downlinkDwellTime, 
  */
 void RegionRxBeaconSetup( LoRaMacRegion_t region, RxBeaconSetup_t* rxBeaconSetup, uint8_t* outDr );
 
+/*!
+ * \brief Gets the version of the regional parameters implementation.
+ *
+ * \retval Version of the regional parameters.
+ */
+Version_t RegionGetVersion( void );
+
 /*! \} defgroup REGION */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // __REGION_H__

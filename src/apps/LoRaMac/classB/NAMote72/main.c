@@ -48,6 +48,16 @@
 //#define USE_BEACON_TIMING
 
 /*!
+ * Enables/Disables the setup of a local Multicast Channel Setup.
+ */
+#define LOCAL_MULTICAST_SETUP_ENABLED               0
+
+/*!
+ * Enables/Disables the ping slot frequency hopping.
+ */
+#define LOCAL_MULTICAST_SETUP_DISABLE_SLOT_HOP      0
+
+/*!
  * Defines the application data transmission duty cycle. 30s, value in [ms].
  */
 #define APP_TX_DUTYCYCLE                            30000
@@ -101,8 +111,6 @@
  */
 #define LORAWAN_APP_PORT                            2
 
-static uint8_t DevEui[] = LORAWAN_DEVICE_EUI;
-static uint8_t JoinEui[] = LORAWAN_JOIN_EUI;
 #if( ABP_ACTIVATION_LRWAN_VERSION == ABP_ACTIVATION_LRWAN_VERSION_V10x )
 static uint8_t GenAppKey[] = LORAWAN_GEN_APP_KEY;
 #else
@@ -353,8 +361,6 @@ static void JoinNetwork( void )
     LoRaMacStatus_t status;
     MlmeReq_t mlmeReq;
     mlmeReq.Type = MLME_JOIN;
-    mlmeReq.Req.Join.DevEui = DevEui;
-    mlmeReq.Req.Join.JoinEui = JoinEui;
     mlmeReq.Req.Join.Datarate = LORAWAN_DEFAULT_DATARATE;
 
     // Starts the join procedure
@@ -369,6 +375,12 @@ static void JoinNetwork( void )
     }
     else
     {
+        if( status == LORAMAC_STATUS_DUTYCYCLE_RESTRICTED )
+        {
+            TimerTime_t nextTxIn = 0;
+            LoRaMacQueryNextTxDelay( LORAWAN_DEFAULT_DATARATE, &nextTxIn );
+            printf( "Next Tx in  : ~%lu second(s)\r\n", ( nextTxIn / 1000 ) );
+        }
         DeviceState = DEVICE_STATE_CYCLE;
     }
 }
@@ -553,6 +565,13 @@ static bool SendFrame( void )
     status = LoRaMacMcpsRequest( &mcpsReq );
     printf( "\r\n###### ===== MCPS-Request ==== ######\r\n" );
     printf( "STATUS      : %s\r\n", MacStatusStrings[status] );
+
+    if( status == LORAMAC_STATUS_DUTYCYCLE_RESTRICTED )
+    {
+        TimerTime_t nextTxIn = 0;
+        LoRaMacQueryNextTxDelay( LORAWAN_DEFAULT_DATARATE, &nextTxIn );
+        printf( "Next Tx in  : ~%lu second(s)\r\n", ( nextTxIn / 1000 ) );
+    }
 
     if( status == LORAMAC_STATUS_OK )
     {
@@ -1217,6 +1236,8 @@ int main( void )
     LoRaMacCallback_t macCallbacks;
     MibRequestConfirm_t mibReq;
     LoRaMacStatus_t status;
+    uint8_t devEui[] = LORAWAN_DEVICE_EUI;
+    uint8_t joinEui[] = LORAWAN_JOIN_EUI;
 
     BoardInitMcu( );
     BoardInitPeriph( );
@@ -1230,12 +1251,118 @@ int main( void )
     macCallbacks.NvmContextChange = NvmCtxMgmtEvent;
     macCallbacks.MacProcessNotify = OnMacProcessNotify;
 
-    LoRaMacInitialization( &macPrimitives, &macCallbacks, ACTIVE_REGION );
+    status = LoRaMacInitialization( &macPrimitives, &macCallbacks, ACTIVE_REGION );
+    if ( status != LORAMAC_STATUS_OK )
+    {
+        printf( "LoRaMac wasn't properly initialized, error: %s", MacStatusStrings[status] );
+        // Fatal error, endless loop.
+        while ( 1 )
+        {
+        }
+    }
+
+#if ( LOCAL_MULTICAST_SETUP_ENABLED == 1 )
+    // Initialize local Multicast Channel
+
+    // Multicast session keys
+    uint8_t localMcAppSKey[] = LORAWAN_APP_S_KEY;
+    uint8_t localMcNwkSKey[] = LORAWAN_NWK_S_ENC_KEY;
+
+    /*!
+     * Multicast address
+     *
+     * The multicast address should be different than the device address as it should
+     * not use this address for transmission. But this address should be registered in the end device
+     * to receive a downlink multicast message from the network.
+     */
+    uint32_t localMcAddress = 0x01020304;
+
+    //                               AS923,     AU915,     CN470,     CN779,     EU433,     EU868,     KR920,     IN865,     US915,     RU864
+#if( LOCAL_MULTICAST_SETUP_DISABLE_SLOT_HOP == 1 )
+    const uint32_t frequencies[] = { 923200000, 923300000, 505300000, 786000000, 434665000, 869525000, 921900000, 866550000, 923300000, 869100000 };
+#else
+    const uint32_t frequencies[] = { 923200000, 0        , 0,         786000000, 434665000, 869525000, 921900000, 866550000, 0,         69100000 };
+#endif
+    const int8_t dataRates[]     = { DR_2,      DR_2,      DR_0,      DR_0,      DR_0,      DR_0,      DR_0,      DR_0,      DR_0,      DR_0 };
+
+    McChannelParams_t channel =
+    {
+        .IsRemotelySetup = false,
+        .Class = CLASS_B,
+        .IsEnabled = true,
+        .GroupID = MULTICAST_0_ADDR,
+        .Address = localMcAddress,
+        .McKeys =
+        {
+            .McAppSKey = localMcAppSKey,
+            .McNwkSKey = localMcNwkSKey,
+        },
+        .FCountMin = 0,
+        .FCountMax = UINT32_MAX,
+        .RxParams.ClassB =
+        {
+            .Frequency = frequencies[ACTIVE_REGION],
+            .Datarate = dataRates[ACTIVE_REGION],
+            .Periodicity = REGION_COMMON_DEFAULT_PING_SLOT_PERIODICITY,
+        }
+    };
+
+    status = LoRaMacMcChannelSetup( &channel );
+
+    if( status == LORAMAC_STATUS_OK )
+    {
+        uint8_t mcChannelSetupStatus = 0x00;
+        if( LoRaMacMcChannelSetupRxParams( channel.GroupID, &channel.RxParams, &mcChannelSetupStatus ) == LORAMAC_STATUS_OK )
+        {
+            if( ( mcChannelSetupStatus & 0xFC ) == 0x00 )
+            {
+                printf("MC #%d setup, OK\r\n", ( mcChannelSetupStatus & 0x03 ) );
+            }
+            else
+            {
+                printf("MC #%d setup, ERROR - ", ( mcChannelSetupStatus & 0x03 ) );
+                if( ( mcChannelSetupStatus & 0x10 ) == 0x10 )
+                {
+                    printf("MC group UNDEFINED - ");
+                }
+                else
+                {
+                    printf("MC group OK - ");
+                }
+
+                if( ( mcChannelSetupStatus & 0x08 ) == 0x08 )
+                {
+                    printf("MC Freq ERROR - ");
+                }
+                else
+                {
+                    printf("MC Freq OK - ");
+                }
+                if( ( mcChannelSetupStatus & 0x04 ) == 0x04 )
+                {
+                    printf("MC datarate ERROR\r\n");
+                }
+                else
+                {
+                    printf("MC datarate OK\r\n");
+                }
+            }
+        }
+        else
+        {
+            printf( "MC Rx params setup, error: %s \r\n", MacStatusStrings[status] );
+        }
+    }
+    else
+    {
+        printf( "MC setup, error: %s \r\n", MacStatusStrings[status] );
+    }
+#endif
 
     DeviceState = DEVICE_STATE_RESTORE;
     WakeUpState = DEVICE_STATE_START;
 
-    printf( "###### ===== ClassB demo application v1.0.RC1 ==== ######\r\n\r\n" );
+    printf( "###### ===== ClassB demo application v1.0.0 ==== ######\r\n\r\n" );
 
     while( 1 )
     {
@@ -1280,13 +1407,21 @@ int main( void )
                     LoRaMacMibSetRequestConfirm( &mibReq );
 
                     // Initialize LoRaMac device unique ID if not already defined in Commissioning.h
-                    if( ( DevEui[0] == 0 ) && ( DevEui[1] == 0 ) &&
-                        ( DevEui[2] == 0 ) && ( DevEui[3] == 0 ) &&
-                        ( DevEui[4] == 0 ) && ( DevEui[5] == 0 ) &&
-                        ( DevEui[6] == 0 ) && ( DevEui[7] == 0 ) )
+                    if( ( devEui[0] == 0 ) && ( devEui[1] == 0 ) &&
+                        ( devEui[2] == 0 ) && ( devEui[3] == 0 ) &&
+                        ( devEui[4] == 0 ) && ( devEui[5] == 0 ) &&
+                        ( devEui[6] == 0 ) && ( devEui[7] == 0 ) )
                     {
-                        BoardGetUniqueId( DevEui );
+                        BoardGetUniqueId( devEui );
                     }
+
+                    mibReq.Type = MIB_DEV_EUI;
+                    mibReq.Param.DevEui = devEui;
+                    LoRaMacMibSetRequestConfirm( &mibReq );
+
+                    mibReq.Type = MIB_JOIN_EUI;
+                    mibReq.Param.JoinEui = joinEui;
+                    LoRaMacMibSetRequestConfirm( &mibReq );
 
 #if( OVER_THE_AIR_ACTIVATION == 0 )
                     // Choose a random device address if not already defined in Commissioning.h
@@ -1377,16 +1512,20 @@ int main( void )
             }
             case DEVICE_STATE_JOIN:
             {
-                printf( "DevEui      : %02X", DevEui[0] );
+                mibReq.Type = MIB_DEV_EUI;
+                LoRaMacMibGetRequestConfirm( &mibReq );
+                printf( "DevEui      : %02X", mibReq.Param.DevEui[0] );
                 for( int i = 1; i < 8; i++ )
                 {
-                    printf( "-%02X", DevEui[i] );
+                    printf( "-%02X", mibReq.Param.DevEui[i] );
                 }
                 printf( "\r\n" );
-                printf( "AppEui      : %02X", JoinEui[0] );
+                mibReq.Type = MIB_JOIN_EUI;
+                LoRaMacMibGetRequestConfirm( &mibReq );
+                printf( "AppEui      : %02X", mibReq.Param.JoinEui[0] );
                 for( int i = 1; i < 8; i++ )
                 {
-                    printf( "-%02X", JoinEui[i] );
+                    printf( "-%02X", mibReq.Param.JoinEui[i] );
                 }
                 printf( "\r\n" );
                 printf( "AppKey      : %02X", NwkKey[0] );
